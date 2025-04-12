@@ -1,0 +1,42 @@
+{
+  "namespace": "com.fraudrisk.model",
+  "type": "record",
+  "name": "Transaction",
+  "fields": [
+    {"name": "transactionId", "type": "string"},
+    {"name": "timestamp", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+    {"name": "amount", "type": {"type": "bytes", "logicalType": "decimal", "precision": 18, "scale": 2}},
+    {"name": "currency", "type": "string"},
+    {"name": "customerId", "type": "string"},
+    {"name": "customerName", "type": "string"},
+    {"name": "sourceId", "type": "string"},
+    {"name": "sourceType", "type": "string"},
+    {"name": "destinationId", "type": "string"},
+    {"name": "destinationType", "type": "string"},
+    {"name": "transactionType", "type": "string"},
+    {
+      "name": "metadata",
+      "type": {
+        "type": "record",
+        "name": "Metadata",
+        "fields": [
+          {"name": "ipAddress", "type": ["null", "string"], "default": null},
+          {"name": "deviceId", "type": ["null", "string"], "default": null},
+          {
+            "name": "location",
+            "type": ["null", {
+              "type": "record",
+              "name": "Location",
+              "fields": [
+                {"name": "latitude", "type": ["null", "double"], "default": null},
+                {"name": "longitude", "type": ["null", "double"], "default": null}
+              ]
+            }],
+            "default": null
+          },
+          {"name": "userAgent", "type": ["null", "string"], "default": null}
+        ]
+      }
+    }
+  ]
+}
