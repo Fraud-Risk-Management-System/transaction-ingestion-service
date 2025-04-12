@@ -1,4 +1,3 @@
-// src/main/java/com/fraudrisk/controller/TransactionController.java
 package com.fraudrisk.controller;
 
 import com.fraudrisk.dto.BatchResponse;
@@ -6,6 +5,7 @@ import com.fraudrisk.dto.TransactionRequest;
 import com.fraudrisk.service.MetricsService;
 import com.fraudrisk.service.TransactionService;
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
@@ -39,8 +39,22 @@ public class TransactionController {
     @Timed(value = "api.transaction.single", description = "Time taken to process a single transaction API call")
     public ResponseEntity<?> ingestTransaction(@Valid @RequestBody TransactionRequest request) {
         log.debug("Received transaction request: {}", request.getTransactionId());
-        transactionService.processTransaction(request);
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body("Response Accpted");
+
+        Timer.Sample sample = metricsService.startProcessingTimer();
+
+        // Record metrics for this transaction
+        metricsService.recordTransactionReceived();
+        metricsService.recordTransactionAmount(request.getAmount());
+
+        try {
+            transactionService.processTransaction(request);
+            metricsService.stopProcessingTimer(sample);
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body("Transaction Accepted");
+        } catch (Exception e) {
+            metricsService.recordTransactionFailed();
+            metricsService.stopProcessingTimer(sample);
+            throw e;
+        }
     }
 
     /**
@@ -55,6 +69,9 @@ public class TransactionController {
             @RequestBody List<@Valid TransactionRequest> requests) {
 
         log.debug("Received batch with {} transactions", requests.size());
+
+        // Record batch metrics
+        metricsService.recordBatchReceived(requests.size());
 
         // Process asynchronously
         CompletableFuture.runAsync(() -> transactionService.processTransactions(requests));
@@ -84,11 +101,11 @@ public class TransactionController {
     public ResponseEntity<Map<String, Object>> basicMetrics() {
         Map<String, Object> metrics = new HashMap<>();
 
-        // This would typically be obtained from the MetricsService
-        metrics.put("transactionsReceived", 0);
-        metrics.put("transactionsProcessed", 0);
-        metrics.put("transactionsFailed", 0);
-        metrics.put("averageProcessingTimeMs", 0);
+        // Get actual metrics from the MetricsService
+        metrics.put("transactionsReceived", metricsService.getTransactionsReceivedCount());
+        metrics.put("transactionsProcessed", metricsService.getTransactionsProcessedCount());
+        metrics.put("transactionsFailed", metricsService.getTransactionsFailedCount());
+        metrics.put("averageProcessingTimeMs", metricsService.getAverageProcessingTimeMs());
         metrics.put("apiHealthy", true);
 
         return ResponseEntity.ok(metrics);
@@ -102,5 +119,6 @@ public class TransactionController {
     public void setThrottleStatus(@RequestParam boolean enabled) {
         // Implementation would typically control a throttling mechanism
         log.info("Transaction throttling set to: {}", enabled);
+        metricsService.setThrottlingEnabled(enabled);
     }
 }

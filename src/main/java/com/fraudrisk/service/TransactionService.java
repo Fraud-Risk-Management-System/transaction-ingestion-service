@@ -7,7 +7,6 @@ import com.fraudrisk.model.Transaction;
 import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -16,16 +15,12 @@ import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class TransactionService {
 
-    @Autowired
-    private TransactionMapper transactionMapper;
-
-    @Autowired
-    private KafkaProducerService kafkaProducerService;
-
-    @Autowired
-    private MetricsService metricsService;
+    private final TransactionMapper transactionMapper;
+    private final KafkaProducerService kafkaProducerService;
+    private final MetricsService metricsService;
 
     /**
      * Process a single transaction

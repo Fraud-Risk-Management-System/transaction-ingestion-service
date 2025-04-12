@@ -1,7 +1,6 @@
 // src/main/java/com/fraudrisk/dto/TransactionRequest.java
 package com.fraudrisk.dto;
 
-import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import lombok.AllArgsConstructor;
@@ -26,7 +25,7 @@ public class TransactionRequest {
     @Pattern(regexp = "^[a-zA-Z0-9-_]{1,50}$", message = "Transaction ID must be alphanumeric and between 1-50 characters")
     private String transactionId;
 
-    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSZ")
+    // @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSZ")
     private Instant timestamp;
 
     @NotNull(message = "Amount is required")

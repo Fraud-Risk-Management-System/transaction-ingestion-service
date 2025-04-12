@@ -8,17 +8,101 @@ The Transaction Ingestion Service receives transaction data via REST API, conver
 
 ## Features
 
-- REST API for single and batch transaction processing
-- Avro serialization with Schema Registry integration
-- Kafka production with exactly-once semantics
-- Prometheus metrics integration
-- Containerized deployment with Docker Compose
+- **REST API**: Endpoints for single and batch transaction processing
+- **Avro Serialization**: Schema-based serialization with Schema Registry integration
+- **Kafka Integration**: High-throughput message production with exactly-once semantics
+- **Metrics & Monitoring**: Prometheus integration with custom metrics
+- **Containerization**: Docker and Docker Compose for easy deployment
+- **Validation**: Comprehensive input validation for all transaction data
+- **Performance**: Optimized for high-throughput with proper batching and async processing
+
+## Architecture
+
+This service is part of a larger Fraud Risk Management system:
+
+```
+                 ┌─────────────────┐
+                 │ API Gateway     │
+                 └────────┬────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────┐
+│ Transaction Ingestion Service           │
+│                                         │
+│  ┌─────────┐    ┌─────────┐    ┌──────┐ │
+│  │ REST API├───►│ Services├───►│Kafka │ │
+│  └─────────┘    └─────────┘    └──────┘ │
+└─────────────────────┬───────────────────┘
+                      │
+                      ▼
+               ┌─────────────┐
+               │ Kafka       │
+               └──────┬──────┘
+                      │
+                      ▼
+          ┌───────────────────────┐
+          │ Rule Engine Service   │
+          └───────────────────────┘
+```
 
 ## Prerequisites
 
 - Java 17 or higher
 - Docker and Docker Compose
-- Maven
+- Maven 3.6+
+
+## Quick Start
+
+### Using Docker Compose (Recommended)
+
+The easiest way to run the entire stack:
+
+```bash
+# Clone the repository
+git clone https://github.com/Fraud-Risk-Management-System/transaction-ingestion-service.git
+cd transaction-ingestion-service
+
+# Start all services
+docker-compose up -d
+```
+
+This starts:
+- Zookeeper
+- Kafka
+- Schema Registry
+- Transaction Ingestion Service
+- Prometheus
+- Grafana
+
+### Local Development
+
+For development, you might want to run the services individually:
+
+1. **Start the infrastructure:**
+   ```bash
+   docker-compose up -d zookeeper kafka schema-registry
+   ```
+
+2. **Generate Avro classes:**
+   ```bash
+   ./mvnw generate-sources
+   ```
+
+3. **Run the application:**
+   ```bash
+   ./mvnw spring-boot:run
+   ```
+
+### IDE Setup
+
+When working with this project in an IDE:
+
+1. Run `./mvnw generate-sources` first to generate Avro classes
+2. Make sure `target/generated-sources/avro` is marked as a source root
+3. For IntelliJ IDEA:
+   - Go to File > Project Structure > Modules
+   - Find the `target/generated-sources/avro` directory
+   - Mark it as "Sources"
 
 ## Configuration
 
@@ -27,47 +111,28 @@ The application can be configured via `application.properties` or environment va
 ### Kafka Configuration
 
 ```properties
+# When running locally (outside Docker)
 spring.kafka.bootstrap-servers=localhost:29092
-spring.kafka.producer.properties.schema.registry.url=http://localhost:8081
-kafka.topics.transactions=banking-transactions
+
+# When running inside Docker
+spring.kafka.bootstrap-servers=kafka:9092
+
+# Schema Registry
+spring.kafka.producer.properties.schema.registry.url=http://localhost:8081  # Or http://schema-registry:8081 in Docker
 ```
 
-> **Important**: When running the application locally (outside Docker), use `localhost:29092` for the Kafka bootstrap servers. When running inside Docker, use `kafka:9092`.
+### Performance Tuning
 
-## Running Locally
+```properties
+# Kafka producer settings
+spring.kafka.producer.batch-size=32768
+spring.kafka.producer.linger-ms=5
+spring.kafka.producer.buffer-memory=67108864
+spring.kafka.producer.compression-type=lz4
 
-1. Start the infrastructure services:
-   ```bash
-   docker-compose up -d zookeeper kafka schema-registry prometheus grafana
-   ```
-
-2. Run the application:
-   ```bash
-   ./mvnw spring-boot:run
-   ```
-
-## Building and Running with Docker
-
-### Building for Multiple Architectures
-
-This project supports both ARM64 (e.g., Apple Silicon) and x86-64 architectures. To build for both:
-
-1. Set up Docker buildx (one-time setup):
-   ```bash
-   docker buildx create --name mybuilder --use
-   ```
-
-2. Build and push multi-architecture image:
-   ```bash
-   docker buildx build --platform linux/amd64,linux/arm64 -t yourusername/transaction-ingestion-service:latest --push .
-   ```
-
-   Replace `yourusername` with your container registry username.
-
-### Running with Docker Compose
-
-```bash
-docker-compose up -d
+# Server settings
+server.tomcat.max-threads=200
+server.tomcat.max-connections=10000
 ```
 
 ## API Usage
@@ -79,23 +144,21 @@ curl -X POST http://localhost:8080/api/v1/transactions \
   -H "Content-Type: application/json" \
   -d '{
     "transactionId": "TX123456789",
-    "accountId": "ACC987654321",
+    "timestamp": "2023-03-15T14:30:00.000Z",
+    "amount": 499.99,
+    "currency": "USD",
     "customerId": "CUST123456",
     "sourceId": "ATM_NYC_001",
     "transactionType": "WITHDRAWAL",
-    "amount": 499.99,
-    "currency": "USD",
-    "timestamp": 1742598645123,
-    "merchantName": "Online Retailer Inc.",
-    "merchantCategory": "RETAIL",
-    "cardPresent": false,
-    "ipAddress": "192.168.1.100",
-    "deviceId": "DEVICE-ABC123",
-    "location": {
-      "latitude": 37.7749,
-      "longitude": -122.4194,
-      "country": "US",
-      "city": "San Francisco"
+    "destinationId": "MERCHANT-456",
+    "destinationType": "MERCHANT",
+    "metadata": {
+      "ipAddress": "192.168.1.100",
+      "deviceId": "DEVICE-ABC123",
+      "location": {
+        "latitude": 37.7749,
+        "longitude": -122.4194
+      }
     }
   }'
 ```
@@ -108,63 +171,99 @@ curl -X POST http://localhost:8080/api/v1/transactions/batch \
   -d '[
     {
       "transactionId": "TX123456789",
-      "accountId": "ACC987654321",
-      "customerId": "CUST123456",
-      "sourceId": "ATM_NYC_001",
-      "transactionType": "WITHDRAWAL",
       "amount": 499.99,
       "currency": "USD",
-      "timestamp": 1742598645123,
-      "merchantName": "Online Retailer Inc.",
-      "merchantCategory": "RETAIL",
-      "cardPresent": false,
-      "ipAddress": "192.168.1.100",
-      "deviceId": "DEVICE-ABC123"
+      "customerId": "CUST123456",
+      "sourceId": "ATM_NYC_001",
+      "transactionType": "WITHDRAWAL"
+    },
+    {
+      "transactionId": "TX123456790",
+      "amount": 299.99,
+      "currency": "USD",
+      "customerId": "CUST123456",
+      "sourceId": "ATM_NYC_001",
+      "transactionType": "WITHDRAWAL"
     }
   ]'
 ```
 
 ## Monitoring
 
-- Health check: http://localhost:8080/actuator/health
-- Metrics: http://localhost:8080/actuator/metrics
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (admin/admin)
+- **Health Check**: http://localhost:8080/actuator/health
+- **Metrics**: http://localhost:8080/actuator/metrics
+- **Prometheus**: http://localhost:9090
+- **Grafana**: http://localhost:3000 (admin/admin)
+
+### Key Metrics
+
+- `transactions.received`: Total transactions received
+- `transactions.processed`: Successfully processed transactions
+- `transactions.failed`: Failed transactions
+- `transactions.processing.time`: Processing time histogram
+- `kafka.producer.success`: Successful Kafka sends
+- `kafka.producer.failure`: Failed Kafka sends
+- `transactions.amount`: Transaction amount distribution
 
 ## Troubleshooting
 
-### Kafka Connection Issues
+### Common Issues
 
-If you encounter Kafka connection issues, make sure:
+#### Kafka Connection Issues
 
-1. Your bootstrap server settings match your environment:
+If you encounter Kafka connection issues:
+
+1. Check bootstrap server settings:
    - Local development: `spring.kafka.bootstrap-servers=localhost:29092`
    - Docker: `spring.kafka.bootstrap-servers=kafka:9092`
 
-2. The Kafka and Zookeeper containers are healthy:
+2. Verify Kafka containers are healthy:
    ```bash
    docker-compose ps
    ```
 
-3. You can connect to Kafka from within the container:
+3. Test Kafka connectivity:
    ```bash
    docker exec -it kafka kafka-topics --bootstrap-server kafka:9092 --list
    ```
 
-### Inspecting Kafka Messages
+#### Schema Registry Issues
+
+1. Check Schema Registry is running:
+   ```bash
+   docker-compose ps schema-registry
+   ```
+
+2. Test Schema Registry connectivity:
+   ```bash
+   curl http://localhost:8081/subjects
+   ```
+
+#### Avro Generation Issues
+
+If you encounter "Cannot find class" errors:
+
+1. Regenerate Avro classes:
+   ```bash
+   ./mvnw clean generate-sources
+   ```
+
+2. Ensure your IDE recognizes the generated sources:
+   - Mark `target/generated-sources/avro` as a source root
+   - Reload the project in your IDE
+
+### Viewing Kafka Messages
 
 To view messages in the Kafka topic:
 
 ```bash
+# View raw messages (might be binary due to Avro)
 docker exec -it kafka kafka-console-consumer \
   --bootstrap-server kafka:9092 \
   --topic banking-transactions \
   --from-beginning
-```
 
-For Avro-formatted messages:
-
-```bash
+# View decoded Avro messages
 docker exec -it schema-registry kafka-avro-console-consumer \
   --bootstrap-server kafka:9092 \
   --topic banking-transactions \
@@ -172,22 +271,53 @@ docker exec -it schema-registry kafka-avro-console-consumer \
   --property schema.registry.url=http://schema-registry:8081
 ```
 
-### Missing Dependencies
+## Development Guide
 
-If you encounter Bean creation exceptions related to missing AspectJ:
+### Project Structure
 
 ```
-Error creating bean with name 'timedAspect': Factory method 'timedAspect' threw exception with message: org/aspectj/lang/NoAspectBoundException
+transaction-ingestion-service/
+├── src/
+│   ├── main/
+│   │   ├── java/com/fraudrisk/
+│   │   │   ├── config/         # Configuration classes
+│   │   │   ├── controller/     # REST controllers
+│   │   │   ├── dto/            # Data Transfer Objects
+│   │   │   ├── exception/      # Exception classes
+│   │   │   ├── mapper/         # Data mappers
+│   │   │   ├── model/          # Domain models
+│   │   │   ├── service/        # Business logic
+│   │   │   ├── util/           # Utility classes
+│   │   │   └── TransactionIngestionServiceApplication.java
+│   │   └── resources/
+│   │       ├── application.properties  # Application config
+│   │       └── avro/                   # Avro schemas
+│   └── test/                           # Test classes
+├── docker/                             # Docker configurations
+│   ├── grafana/
+│   └── prometheus/
+├── docker-compose.yml                  # Service definitions
+├── Dockerfile                          # Service image build
+├── pom.xml                             # Maven dependencies
+└── README.md                           # This file
 ```
 
-Make sure you have the Spring AOP dependency in your `pom.xml`:
+### Working with Avro
 
-```xml
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-aop</artifactId>
-</dependency>
-```
+Remember these key points when working with Avro:
+
+1. Define schemas in `src/main/resources/avro/*.avsc` files
+2. Generate Java classes with `./mvnw generate-sources`
+3. Never modify generated classes directly
+4. Follow schema evolution best practices for compatibility
+
+### Adding New Features
+
+1. Define new DTOs for your API endpoints
+2. Update or create controllers as needed
+3. Implement business logic in services
+4. Add appropriate tests
+5. Consider adding metrics for new functionality
 
 ## License
 

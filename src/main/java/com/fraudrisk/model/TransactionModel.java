@@ -1,23 +1,24 @@
-// src/main/java/com/fraudrisk/model/TransactionModel.java
 package com.fraudrisk.model;
 
-import com.fraudrisk.util.AvroUtils;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
- * Plain Java model representing a Transaction
- * This class serves as a bridge between the Avro-generated Transaction class and application code
+ * Domain model representing a Transaction
+ * This is a standard Java object used within the application, separate from
+ * the Avro-generated classes used for serialization.
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@Slf4j
 public class TransactionModel {
     private String transactionId;
     private Instant timestamp;
@@ -36,84 +37,109 @@ public class TransactionModel {
      * Convert from Avro Transaction to TransactionModel
      */
     public static TransactionModel fromAvro(Transaction avroTransaction) {
-        MetadataModel metadataModel = null;
-        if (avroTransaction.getMetadata() != null) {
-            LocationModel locationModel = null;
-            if (avroTransaction.getMetadata().getLocation() != null) {
-                locationModel = LocationModel.builder()
-                        .latitude(avroTransaction.getMetadata().getLocation().getLatitude())
-                        .longitude(avroTransaction.getMetadata().getLocation().getLongitude())
+        try {
+            // Extract metadata if present
+            MetadataModel metadataModel = null;
+            if (avroTransaction.getMetadata() != null) {
+                // Extract location if present
+                LocationModel locationModel = null;
+                if (avroTransaction.getMetadata().getLocation() != null) {
+                    locationModel = LocationModel.builder()
+                            .latitude(avroTransaction.getMetadata().getLocation().getLatitude())
+                            .longitude(avroTransaction.getMetadata().getLocation().getLongitude())
+                            .build();
+                }
+
+                metadataModel = MetadataModel.builder()
+                        .ipAddress(avroTransaction.getMetadata().getIpAddress())
+                        .deviceId(avroTransaction.getMetadata().getDeviceId())
+                        .userAgent(avroTransaction.getMetadata().getUserAgent())
+                        .location(locationModel)
                         .build();
             }
 
-            metadataModel = MetadataModel.builder()
-                    .ipAddress(avroTransaction.getMetadata().getIpAddress())
-                    .deviceId(avroTransaction.getMetadata().getDeviceId())
-                    .userAgent(avroTransaction.getMetadata().getUserAgent())
-                    .location(locationModel)
-                    .build();
-        }
+            // Get amount directly as BigDecimal
+            BigDecimal amountValue = (BigDecimal) avroTransaction.getAmount();
 
-        return TransactionModel.builder()
-                .transactionId(avroTransaction.getTransactionId())
-                .timestamp(avroTransaction.getTimestamp())
-                .amount(avroTransaction.getAmount())
-                .currency(avroTransaction.getCurrency())
-                .customerId(avroTransaction.getCustomerId())
-                .customerName(avroTransaction.getCustomerName())
-                .sourceId(avroTransaction.getSourceId())
-                .sourceType(avroTransaction.getSourceType())
-                .destinationId(avroTransaction.getDestinationId())
-                .destinationType(avroTransaction.getDestinationType())
-                .transactionType(avroTransaction.getTransactionType())
-                .metadata(metadataModel)
-                .build();
+            // Extract timestamp directly as Instant
+            Instant timestampValue = avroTransaction.getTimestamp();
+
+            // Build and return the model
+            return TransactionModel.builder()
+                    .transactionId(avroTransaction.getTransactionId())
+                    .timestamp(timestampValue)
+                    .amount(amountValue)
+                    .currency(avroTransaction.getCurrency())
+                    .customerId(avroTransaction.getCustomerId())
+                    .customerName(avroTransaction.getCustomerName())
+                    .sourceId(avroTransaction.getSourceId())
+                    .sourceType(avroTransaction.getSourceType())
+                    .destinationId(avroTransaction.getDestinationId())
+                    .destinationType(avroTransaction.getDestinationType())
+                    .transactionType(avroTransaction.getTransactionType())
+                    .metadata(metadataModel)
+                    .build();
+        } catch (Exception e) {
+            log.error("Error converting Avro Transaction to TransactionModel: {}", e.getMessage(), e);
+            throw e;
+        }
     }
 
     /**
-     * Convert to Avro Transaction
+     * Convert this TransactionModel to an Avro Transaction
      */
     public Transaction toAvro() {
-        Metadata avroMetadata = null;
-        if (metadata != null) {
-            Location avroLocation = null;
-            if (metadata.getLocation() != null) {
-                avroLocation = Location.newBuilder()
-                        .setLatitude(metadata.getLocation().getLatitude())
-                        .setLongitude(metadata.getLocation().getLongitude())
+        try {
+            // Create Avro metadata
+            Metadata avroMetadata = null;
+            if (metadata != null) {
+                // Create location if present
+                Location avroLocation = null;
+                if (metadata.getLocation() != null) {
+                    avroLocation = Location.newBuilder()
+                            .setLatitude(metadata.getLocation().getLatitude())
+                            .setLongitude(metadata.getLocation().getLongitude())
+                            .build();
+                }
+
+                avroMetadata = Metadata.newBuilder()
+                        .setIpAddress(metadata.getIpAddress())
+                        .setDeviceId(metadata.getDeviceId())
+                        .setUserAgent(metadata.getUserAgent())
+                        .setLocation(avroLocation)
+                        .build();
+            } else {
+                // Create empty metadata to satisfy Avro schema
+                avroMetadata = Metadata.newBuilder()
+                        .setIpAddress(null)
+                        .setDeviceId(null)
+                        .setLocation(null)
+                        .setUserAgent(null)
                         .build();
             }
 
-            avroMetadata = Metadata.newBuilder()
-                    .setIpAddress(metadata.getIpAddress())
-                    .setDeviceId(metadata.getDeviceId())
-                    .setUserAgent(metadata.getUserAgent())
-                    .setLocation(avroLocation)
-                    .build();
-        } else {
-            // Create empty metadata to satisfy Avro schema
-            avroMetadata = Metadata.newBuilder()
-                    .setIpAddress(null)
-                    .setDeviceId(null)
-                    .setLocation(null)
-                    .setUserAgent(null)
-                    .build();
-        }
+            // Use Instant directly for timestamp
+            Instant timestampValue = timestamp != null ? timestamp : Instant.now();
 
-        return Transaction.newBuilder()
-                .setTransactionId(transactionId)
-                .setTimestamp(timestamp != null ? timestamp : Instant.now())
-                .setAmount(amount)
-                .setCurrency(currency)
-                .setCustomerId(customerId)
-                .setCustomerName(customerName != null ? customerName : "")
-                .setSourceId(sourceId)
-                .setSourceType(sourceType != null ? sourceType : "")
-                .setDestinationId(destinationId != null ? destinationId : "")
-                .setDestinationType(destinationType != null ? destinationType : "")
-                .setTransactionType(transactionType)
-                .setMetadata(avroMetadata)
-                .build();
+            // Build and return the Avro object with direct BigDecimal
+            return Transaction.newBuilder()
+                    .setTransactionId(transactionId)
+                    .setTimestamp(timestampValue)
+                    .setAmount(amount)  // Pass BigDecimal directly
+                    .setCurrency(currency)
+                    .setCustomerId(customerId)
+                    .setCustomerName(customerName != null ? customerName : "")
+                    .setSourceId(sourceId)
+                    .setSourceType(sourceType != null ? sourceType : "")
+                    .setDestinationId(destinationId != null ? destinationId : "")
+                    .setDestinationType(destinationType != null ? destinationType : "")
+                    .setTransactionType(transactionType)
+                    .setMetadata(avroMetadata)
+                    .build();
+        } catch (Exception e) {
+            log.error("Error converting TransactionModel to Avro Transaction: {}", e.getMessage(), e);
+            throw e;
+        }
     }
 
     @Data

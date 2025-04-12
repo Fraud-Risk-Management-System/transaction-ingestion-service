@@ -1,81 +1,81 @@
 package com.fraudrisk.service;
 
+import com.fraudrisk.exception.KafkaProducerException;
 import com.fraudrisk.model.Transaction;
-import io.confluent.kafka.serializers.KafkaAvroSerializer;
+import io.micrometer.core.instrument.Timer;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.serialization.StringSerializer;
-import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
-//import javax.annotation.PostConstruct;
-import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Slf4j
 @Service
-public class KafkaProducerService implements InitializingBean {
+@RequiredArgsConstructor
+public class KafkaProducerService {
 
-    @Value("${spring.kafka.bootstrap-servers}")
-    private String bootstrapServers;
-
-    @Value("${spring.kafka.producer.properties.schema.registry.url}")
-    private String schemaRegistryUrl;
+    private final KafkaTemplate<String, Transaction> kafkaTemplate;
+    private final MetricsService metricsService;
 
     @Value("${kafka.topics.transactions}")
     private String transactionTopic;
 
-    private KafkaProducer<String, Transaction> producer;
+    @Value("${kafka.producer.timeout-ms:5000}")
+    private long producerTimeoutMs;
 
-//    @PostConstruct
-//    public void init() {
-//
-//    }
+    @Value("${kafka.producer.sync-send:false}")
+    private boolean syncSend;
 
+    /**
+     * Send a transaction to Kafka
+     * Can be configured for sync or async operation
+     */
     public CompletableFuture<Void> sendTransaction(Transaction transaction) {
-        CompletableFuture<Void> future = new CompletableFuture<>();
+        // Use transaction ID as key to ensure related transactions go to the same partition
         String key = transaction.getTransactionId().toString();
 
-        try {
-            ProducerRecord<String, Transaction> record = new ProducerRecord<>(
-                    transactionTopic, key, transaction);
+        Timer.Sample sample = metricsService.startKafkaProducerTimer();
 
-            producer.send(record, (metadata, exception) -> {
-                if (exception != null) {
-                    log.error("Failed to send transaction {}: {}",
-                            key, exception.getMessage(), exception);
-                    future.completeExceptionally(exception);
-                } else {
-                    log.debug("Transaction sent successfully: {}, partition: {}, offset: {}",
-                            key, metadata.partition(), metadata.offset());
-                    future.complete(null);
-                }
-            });
-        } catch (Exception e) {
-            log.error("Error preparing transaction for sending: {}", e.getMessage(), e);
-            future.completeExceptionally(e);
+        CompletableFuture<SendResult<String, Transaction>> resultFuture =
+                kafkaTemplate.send(transactionTopic, key, transaction);
+
+        // Apply callbacks for metrics
+        resultFuture.whenComplete((result, ex) -> {
+            metricsService.stopKafkaProducerTimer(sample);
+
+            if (ex == null) {
+                metricsService.recordKafkaProducerSuccess();
+                log.debug("Transaction sent successfully: id={}, topic={}, partition={}, offset={}",
+                        key, result.getRecordMetadata().topic(),
+                        result.getRecordMetadata().partition(),
+                        result.getRecordMetadata().offset());
+            } else {
+                metricsService.recordKafkaProducerFailure();
+                log.error("Failed to send transaction with id {}: {}", key, ex.getMessage(), ex);
+            }
+        });
+
+        // For synchronous operation, wait for completion with timeout
+        if (syncSend) {
+            try {
+                resultFuture.get(producerTimeoutMs, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new KafkaProducerException("Interrupted while sending transaction", key, e);
+            } catch (ExecutionException e) {
+                throw new KafkaProducerException("Failed to send transaction", key, e.getCause());
+            } catch (TimeoutException e) {
+                throw new KafkaProducerException("Timeout while sending transaction", key, e);
+            }
         }
 
-        return future;
-    }
-
-    @Override
-    public void afterPropertiesSet() throws Exception {
-        Properties props = new Properties();
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, KafkaAvroSerializer.class.getName());
-        props.put("schema.registry.url", schemaRegistryUrl);
-        props.put(ProducerConfig.ACKS_CONFIG, "all");
-        props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "true");
-        props.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, "5");
-        props.put(ProducerConfig.RETRIES_CONFIG, "5");
-        props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4");
-
-        producer = new KafkaProducer<>(props);
-        log.info("Kafka producer initialized with bootstrap servers: {}", bootstrapServers);
+        // Convert to CompletableFuture<Void> for easier chaining
+        return resultFuture.thenApply(result -> null);
     }
 }

@@ -1,4 +1,3 @@
-// src/main/java/com/fraudrisk/service/MetricsService.java
 package com.fraudrisk.service;
 
 import io.micrometer.core.instrument.Counter;
@@ -10,6 +9,8 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Service for tracking metrics related to the Transaction Ingestion Service
@@ -26,6 +27,7 @@ public class MetricsService {
     private final Counter transactionsFailedCounter;
     private final Counter kafkaProducerSuccessCounter;
     private final Counter kafkaProducerFailureCounter;
+    private final Counter batchReceivedCounter;
 
     // Timers
     private final Timer processingTimer;
@@ -33,6 +35,11 @@ public class MetricsService {
 
     // Distribution summaries
     private final DistributionSummary transactionAmountSummary;
+    private final DistributionSummary batchSizeSummary;
+
+    // Service state
+    private final AtomicBoolean throttlingEnabled = new AtomicBoolean(false);
+    private final AtomicLong lastProcessingTimeMs = new AtomicLong(0);
 
     // Constructor with proper autowiring
     public MetricsService(MeterRegistry meterRegistry) {
@@ -59,6 +66,10 @@ public class MetricsService {
                 .description("Number of messages failed to send to Kafka")
                 .register(meterRegistry);
 
+        this.batchReceivedCounter = Counter.builder("transactions.batch.received")
+                .description("Number of batch requests received")
+                .register(meterRegistry);
+
         // Initialize timers
         this.processingTimer = Timer.builder("transactions.processing.time")
                 .description("Time taken to process transactions")
@@ -75,6 +86,10 @@ public class MetricsService {
                 .description("Distribution of transaction amounts")
                 .baseUnit("dollars")
                 .publishPercentiles(0.5, 0.75, 0.9, 0.95, 0.99)
+                .register(meterRegistry);
+
+        this.batchSizeSummary = DistributionSummary.builder("transactions.batch.size")
+                .description("Distribution of batch sizes")
                 .register(meterRegistry);
     }
 
@@ -97,6 +112,14 @@ public class MetricsService {
      */
     public void recordTransactionFailed() {
         transactionsFailedCounter.increment();
+    }
+
+    /**
+     * Record a batch received
+     */
+    public void recordBatchReceived(int batchSize) {
+        batchReceivedCounter.increment();
+        batchSizeSummary.record(batchSize);
     }
 
     /**
@@ -124,7 +147,8 @@ public class MetricsService {
      * Stop transaction processing timer
      */
     public void stopProcessingTimer(Timer.Sample sample) {
-        sample.stop(processingTimer);
+        long timeNanos = sample.stop(processingTimer);
+        lastProcessingTimeMs.set(TimeUnit.NANOSECONDS.toMillis(timeNanos));
     }
 
     /**
@@ -148,5 +172,55 @@ public class MetricsService {
         if (amount != null) {
             transactionAmountSummary.record(amount.doubleValue());
         }
+    }
+
+    /**
+     * Get the count of transactions received
+     */
+    public long getTransactionsReceivedCount() {
+        return (long) transactionsReceivedCounter.count();
+    }
+
+    /**
+     * Get the count of transactions processed
+     */
+    public long getTransactionsProcessedCount() {
+        return (long) transactionsProcessedCounter.count();
+    }
+
+    /**
+     * Get the count of transactions failed
+     */
+    public long getTransactionsFailedCount() {
+        return (long) transactionsFailedCounter.count();
+    }
+
+    /**
+     * Get the average processing time in milliseconds
+     */
+    public double getAverageProcessingTimeMs() {
+        return processingTimer.mean(TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Get the last processing time in milliseconds
+     */
+    public long getLastProcessingTimeMs() {
+        return lastProcessingTimeMs.get();
+    }
+
+    /**
+     * Set throttling state
+     */
+    public void setThrottlingEnabled(boolean enabled) {
+        throttlingEnabled.set(enabled);
+        log.info("Transaction throttling set to: {}", enabled);
+    }
+
+    /**
+     * Check if throttling is enabled
+     */
+    public boolean isThrottlingEnabled() {
+        return throttlingEnabled.get();
     }
 }
